@@ -1,5 +1,5 @@
-// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*-
-// vim: ts=8 sw=2 smarttab ft=cpp
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:nil -*-
+// vim: ts=8 sw=2 sts=2 expandtab ft=cpp
 
 #include <time.h>
 #include <random>
@@ -373,16 +373,19 @@ int rollover_logging_object(const configuration& conf,
   auto old_obj = obj_name.empty() ? std::nullopt : std::optional<std::string>(obj_name);
 
   auto handle_error = [&dpp, &old_obj, &target_bucket, err_message](int ret) {
-    if (ret == -ECANCELED) {
-      ldpp_dout(dpp, 20) << "INFO: rollover already performed for logging object '" << old_obj <<  "' to logging bucket '" <<
-        target_bucket->get_key() << "'. ret = " << ret << dendl;
-      return 0;
-    }
     if (ret < 0) {
-      ldpp_dout(dpp, 1) << "ERROR: failed to rollover logging object '" << old_obj << "' to logging bucket '" <<
-        target_bucket->get_key() << "'. ret = " << ret << dendl;
-      if (err_message) {
-        *err_message = fmt::format("Failed to rollover logging object of logging bucket '{}'", target_bucket->get_name());
+      if (ret == -ECANCELED) {
+        ldpp_dout(dpp, 20) << "INFO: rollover already performed for logging object '" << old_obj <<  "' to logging bucket '" <<
+          target_bucket->get_key() << "'. ret = " << ret << dendl;
+        if (err_message) {
+          *err_message = fmt::format("Rollover already performed on logging bucket '{}'", target_bucket->get_name());
+        }
+      } else {
+        ldpp_dout(dpp, 1) << "ERROR: failed to rollover logging object '" << old_obj << "' to logging bucket '" <<
+          target_bucket->get_key() << "'. ret = " << ret << dendl;
+        if (err_message) {
+          *err_message = fmt::format("Failed to rollover logging object of logging bucket '{}'", target_bucket->get_name());
+        }
       }
     }
     return ret;
@@ -481,7 +484,7 @@ int log_record(rgw::sal::Driver* driver,
   int ret = rgw_parse_url_bucket(conf.target_bucket, s->bucket_tenant, target_tenant_name, target_bucket_name);
   if (ret < 0) {
     ldpp_dout(dpp, 1) << "ERROR: failed to parse logging bucket name '" << conf.target_bucket << "', ret = " << ret << dendl;
-    set_journal_err(fmt::format("Faild to parse logging bucket name '{}'", conf.target_bucket));
+    set_journal_err(fmt::format("Failed to parse logging bucket name '{}'", conf.target_bucket));
     return ret;
   }
   const rgw_bucket target_bucket_id(target_tenant_name, target_bucket_name);
@@ -490,7 +493,7 @@ int log_record(rgw::sal::Driver* driver,
                                &target_bucket, y);
   if (ret < 0) {
     ldpp_dout(dpp, 1) << "ERROR: failed to load logging bucket '" << target_bucket_id << "'. ret = " << ret << dendl;
-    set_journal_err(fmt::format("Faild to load logging bucket '{}'", target_bucket_id.bucket_id));
+    set_journal_err(fmt::format("Failed to load logging bucket '{}'", target_bucket_id.bucket_id));
     return ret;
   }
 
@@ -515,7 +518,7 @@ int log_record(rgw::sal::Driver* driver,
     if (ceph::coarse_real_time::clock::now() > time_to_commit) {
       ldpp_dout(dpp, 20) << "INFO: logging object '" << obj_name << "' exceeded its time, will be committed to logging bucket '" <<
         target_bucket_id << "'" << dendl;
-      if (ret = rollover_logging_object(conf, target_bucket, obj_name, dpp, region, s->bucket, y, false, &objv_tracker, nullptr, &err_message); ret < 0) {
+      if (ret = rollover_logging_object(conf, target_bucket, obj_name, dpp, region, s->bucket, y, false, &objv_tracker, nullptr, &err_message); ret < 0 && ret != -ECANCELED) {
         set_journal_err(err_message);
         return ret;
       }
@@ -534,13 +537,13 @@ int log_record(rgw::sal::Driver* driver,
     } else {
       ldpp_dout(dpp, 1) << "ERROR: failed to create first time logging object of logging bucket '" <<
         target_bucket_id << "' and prefix '" << conf.target_prefix << "'. ret = " << ret << dendl;
-      set_journal_err(fmt::format("Faild create first time logging object of logging bucket '{}'", target_bucket->get_name()));
+      set_journal_err(fmt::format("Failed to create first time logging object of logging bucket '{}'", target_bucket->get_name()));
       return ret;
     }
   } else {
     ldpp_dout(dpp, 1) << "ERROR: failed to get name of logging object of logging bucket '" <<
       target_bucket_id << "'. ret = " << ret << dendl;
-      set_journal_err(fmt::format("Faild to get name of logging object of logging bucket '{}'", target_bucket->get_name()));
+      set_journal_err(fmt::format("Failed to get name of logging object of logging bucket '{}'", target_bucket->get_name()));
     return ret;
   }
 
@@ -630,7 +633,7 @@ int log_record(rgw::sal::Driver* driver,
   if (ret = get_owner_quota_info(dpp, y, driver, target_bucket->get_owner(), user_quota); ret < 0) {
     ldpp_dout(dpp, 1) << "ERROR: failed to get quota of owner of logging bucket '" <<
       target_bucket_id << "' failed. ret = " << ret << dendl;
-    set_journal_err(fmt::format("Faild to get quota of owner of logging bucket '{}'", target_bucket->get_name()));
+    set_journal_err(fmt::format("Failed to get quota of owner of logging bucket '{}'", target_bucket->get_name()));
     return ret;
   }
   // start with system default quota
@@ -666,7 +669,7 @@ int log_record(rgw::sal::Driver* driver,
   if (ret == -EFBIG) {
     ldpp_dout(dpp, 5) << "WARNING: logging object '" << obj_name << "' is full, will be committed to logging bucket '" <<
       target_bucket->get_key() << "'" << dendl;
-    if (ret = rollover_logging_object(conf, target_bucket, obj_name, dpp, region, s->bucket, y, true, &objv_tracker, nullptr, &err_message); ret < 0 ) {
+    if (ret = rollover_logging_object(conf, target_bucket, obj_name, dpp, region, s->bucket, y, true, &objv_tracker, nullptr, &err_message); ret < 0 && ret != -ECANCELED) {
       set_journal_err(err_message);
       return ret;
     }

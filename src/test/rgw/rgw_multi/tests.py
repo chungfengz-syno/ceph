@@ -1180,6 +1180,32 @@ def test_concurrent_delete_markers_incremental_sync():
 
     zonegroup_bucket_checkpoint(zonegroup_conns, bucket.name)
 
+def test_suspended_delete_marker_incremental_sync():
+    zonegroup = realm.master_zonegroup()
+    zonegroup_conns = ZonegroupConns(zonegroup)
+    zone = zonegroup_conns.rw_zones[0]
+
+    # create a versioned bucket
+    bucket = zone.create_bucket(gen_bucket_name())
+    log.debug('created bucket=%s', bucket.name)
+    bucket.configure_versioning(True)
+    bucket.configure_versioning(False)
+
+    zonegroup_meta_checkpoint(zonegroup)
+
+    obj = 'obj'
+
+    # upload a dummy object and wait for sync. this forces each zone to finish
+    # a full sync and switch to incremental
+    new_key(zone, bucket, obj).set_contents_from_string('')
+    zonegroup_bucket_checkpoint(zonegroup_conns, bucket.name)
+
+    # create several a delete marker on source zone and let it sync
+    key = new_key(zone, bucket, obj)
+    key.delete()
+
+    zonegroup_bucket_checkpoint(zonegroup_conns, bucket.name)
+
 def test_bucket_versioning():
     buckets, zone_bucket = create_bucket_per_zone_in_realm()
     for _, bucket in zone_bucket:
@@ -2326,14 +2352,14 @@ def test_object_acl():
     before_set_acl = bucket2.get_acl(k)
     assert(len(before_set_acl.acl.grants) == 1)
 
-    #set object acl on primary and wait for sync.
-    bucket.set_canned_acl('public-read', key_name=k)
-    log.debug('set acl=%s', bucket.name)
+    #set object acl on secondary and wait for sync.
+    bucket2.set_canned_acl('public-read', key_name=k)
+    log.debug('set acl=%s', bucket2.name)
     zonegroup_data_checkpoint(zonegroup_conns)
-    zonegroup_bucket_checkpoint(zonegroup_conns, bucket.name)
+    zonegroup_bucket_checkpoint(zonegroup_conns, bucket2.name)
 
-    #check object secondary after setacl
-    bucket2 = get_bucket(secondary, bucket.name)
+    #check object on primary after setacl
+    bucket2 = get_bucket(primary, bucket.name)
     after_set_acl = bucket2.get_acl(k)
     assert(len(after_set_acl.acl.grants) == 2) # read grant added on AllUsers
 

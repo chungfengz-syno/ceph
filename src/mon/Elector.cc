@@ -1,5 +1,6 @@
-// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:t -*- 
-// vim: ts=8 sw=2 smarttab
+// -*- mode:C++; tab-width:8; c-basic-offset:2; indent-tabs-mode:nil -*- 
+// vim: ts=8 sw=2 sts=2 expandtab
+
 /*
  * Ceph - scalable distributed file system
  *
@@ -48,8 +49,6 @@ using std::unique_ptr;
 using ceph::bufferlist;
 using ceph::decode;
 using ceph::encode;
-using ceph::Formatter;
-using ceph::JSONFormatter;
 using ceph::mono_clock;
 using ceph::mono_time;
 using ceph::timespan_str;
@@ -460,7 +459,10 @@ void Elector::begin_peer_ping(int peer)
     return;
   }
   if (live_pinging.count(peer)) {
-    dout(20) << peer << " already in live_pinging ... return " << dendl;
+    // This peer is already being pinged
+    // so we don't need to schedule another ping_check
+    // against it, ping_check will call itself because it is self-sustaining.
+    dout(20) << peer << " is already being pinged ... return " << dendl;
     return;
   }
   // Check if quorum feature is not set and we are in
@@ -488,7 +490,8 @@ void Elector::begin_peer_ping(int peer)
       << " no need to schedule ping_check" << dendl;
     return;
   }
-  dout(30) << "schedule ping_check against peer: " << peer << dendl;
+  dout(30) << "schedule ping_check against peer: "
+    << peer << " every " << ping_timeout / PING_DIVISOR << "s" << dendl;
   mon->timer.add_event_after(ping_timeout / PING_DIVISOR,
 			     new C_MonContext{mon, [this, peer](int) {
 				 ping_check(peer);
@@ -517,7 +520,7 @@ bool Elector::send_peer_ping(int peer, const utime_t *n)
   MMonPing *ping = new MMonPing(MMonPing::PING, now, peer_tracker.get_encoded_bl());
   mon->messenger->send_to_mon(ping, mon->monmap->get_addrs(peer));
   peer_sent_ping[peer] = now;
-  dout(20) << " sent ping successfully to peer: " << peer << dendl;
+  dout(20) << " sent ping to peer: " << peer << " at " << now << dendl;
   return true;
 }
 
@@ -565,7 +568,9 @@ void Elector::ping_check(int peer)
     }
   }
 
-  dout(30) << "schedule " << __func__ << " against peer: "<< peer << dendl;
+  dout(30) << "Scheduling next ping_check for peer "
+    << peer << " in " << ping_timeout / PING_DIVISOR
+    << "s (recursively call ping_check until connection state changes)" << dendl;
   mon->timer.add_event_after(ping_timeout / PING_DIVISOR,
 			     new C_MonContext{mon, [this, peer](int) {
 				 ping_check(peer);
