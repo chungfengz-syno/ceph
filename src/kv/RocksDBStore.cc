@@ -1499,11 +1499,24 @@ void RocksDBStore::get_statistics(Formatter *f)
       f->dump_string("block_cache_pinned_blocks_usage", str);
       str.clear();
     }
-    db->GetProperty("rocksdb.cur-size-all-mem-tables", &str);
-    f->dump_string("rocksdb_memtable_usage", str);
-    str.clear();
-    db->GetProperty("rocksdb.estimate-table-readers-mem", &str);
-    f->dump_string("rocksdb_index_filter_blocks_usage", str);
+    
+    vector<rocksdb::ColumnFamilyHandle*> handles;
+    handles.push_back(default_cf);
+    for (auto cf : cf_handles) {
+      for (auto shard_cf : cf.second.handles) {
+        handles.push_back(shard_cf);
+      }
+    }
+    
+    for (auto handle : handles) {
+      std::string cf_name = handle->GetName();
+      db->GetProperty(handle, "rocksdb.cur-size-all-mem-tables", &str);
+      f->dump_string("rocksdb_memtable_usage_" + cf_name, str);
+      str.clear();
+      db->GetProperty(handle, "rocksdb.estimate-table-readers-mem", &str);
+      f->dump_string("rocksdb_index_filter_blocks_usage_" + cf_name, str);
+      str.clear();
+    }
     f->close_section();
   }
 }
